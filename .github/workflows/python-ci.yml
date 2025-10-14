@@ -1,0 +1,17 @@
+name: Python CI
+
+on:
+  pull_request:
+    branches: [ main, dev ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.13
+      - run: python -m venv .venv
+      - run: source .venv/bin/activate && pip install -r requirements.txt
+      - run: source .venv/bin/activate && pytest

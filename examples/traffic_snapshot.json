@@ -1,0 +1,6 @@
+{
+  "timestamp": "2025-10-14T09:00:00Z",
+  "edge_updates": [
+    {"edge_id": 2, "multiplier": 2.0}
+  ]
+}
