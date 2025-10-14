@@ -68,12 +68,11 @@ class Graph:
                 return eid
         return None
 
-    def apply_edge_update(self, update: EdgeUpdate):
-        eid = update.edge_id
-        if eid not in self.edges:
-            return False
-        if update.multiplier is not None:
-            self.edges[eid]['multiplier'] = update.multiplier
-        if update.absolute_time is not None:
-            self.edges[eid]['base_time'] = update.absolute_time
-        return True
+    def apply_edge_update(self, edge_update: EdgeUpdate):
+        edge_id = edge_update.edge_id
+        if edge_id not in self.edges:
+            return
+        if edge_update.multiplier is not None:
+            self.edges[edge_id]['multiplier'] *= edge_update.multiplier
+        if edge_update.absolute_time is not None:
+            self.edges[edge_id]['absolute_time'] = edge_update.absolute_time
