@@ -1,0 +1,45 @@
+{
+  "nodes": [
+    { "id": 1, "lat": 12.97, "lon": 77.59 },
+    { "id": 2, "lat": 12.971, "lon": 77.592 },
+    { "id": 3, "lat": 12.969, "lon": 77.593 },
+    { "id": 4, "lat": 12.965, "lon": 77.60 }
+  ],
+  "edges": [
+    {
+      "edge_id": 1,
+      "from": 1,
+      "to": 2,
+      "base_time": 40,
+      "distance": 800
+    },
+    {
+      "edge_id": 2,
+      "from": 2,
+      "to": 3,
+      "base_time": 40,
+      "distance": 950
+    },
+    {
+      "edge_id": 3,
+      "from": 1,
+      "to": 3,
+      "base_time": 120,
+      "distance": 2200
+    },
+    {
+      "edge_id": 4,
+      "from": 2,
+      "to": 4,
+      "base_time": 60,
+      "distance": 700
+    },
+    {
+      "edge_id": 5,
+      "from": 4,
+      "to": 3,
+      "base_time": 60,
+      "distance": 700
+    }
+  ]
+}
