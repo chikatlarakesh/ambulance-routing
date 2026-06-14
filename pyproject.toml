@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ambulance-routing"
+version = "1.0.0"
+description = "Production-quality ambulance routing backend with dynamic rerouting"
+requires-python = ">=3.10"
+
+# ---------------------------------------------------------------------------
+# Black
+# ---------------------------------------------------------------------------
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311"]
+skip-string-normalization = false
+
+# ---------------------------------------------------------------------------
+# isort
+# ---------------------------------------------------------------------------
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["api", "core"]
+
+# ---------------------------------------------------------------------------
+# mypy
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+ignore_missing_imports = true
+disallow_untyped_defs = false
+warn_return_any = false
+warn_unused_ignores = true
+no_implicit_optional = true
+files = ["api", "core", "tests", "benchmarks"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+
+[tool.coverage.run]
+source = ["api", "core"]
+omit = ["*/tests/*", "*/benchmarks/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false

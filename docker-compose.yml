@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      target: runtime
+    image: ambulance-routing:latest
+    container_name: ambulance-routing-api
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: ${PORT:-8000}
+      GRAPH_PATH: ${GRAPH_PATH:-}
+      REROUTE_THRESHOLD_SEC: ${REROUTE_THRESHOLD_SEC:-120}
+      SLOWDOWN_LOOKAHEAD: ${SLOWDOWN_LOOKAHEAD:-3}
+      SLOWDOWN_RATIO: ${SLOWDOWN_RATIO:-1.5}
+      MAX_EDGE_UPDATES_PER_SNAPSHOT: ${MAX_EDGE_UPDATES_PER_SNAPSHOT:-500}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # Mount a custom graph file without rebuilding the image:
+    # volumes:
+    #   - ./my_city_graph.json:/app/examples/sample_graph.json:ro

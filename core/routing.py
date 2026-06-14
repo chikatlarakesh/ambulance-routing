@@ -1,120 +1,186 @@
-import heapq
-from typing import Tuple, List, Optional
 import datetime
-import time
+import heapq
 import math
+from typing import List, Optional, Tuple
 
-def haversine_distance(lat1, lon1, lat2, lon2):
-    # Earth radius in meters
-    R = 6371000
-    phi1 = math.radians(lat1)
-    phi2 = math.radians(lat2)
+from core.config import A_STAR_MAX_SPEED_MS
+
+UTC = datetime.timezone.utc
+
+
+# ---------------------------------------------------------------------------
+# Datetime helpers
+# ---------------------------------------------------------------------------
+
+
+def _ensure_utc(dt) -> datetime.datetime:
+    """
+    Accept a datetime, ISO-8601 string, or epoch float/int.
+    Always return a timezone-aware UTC datetime.
+    """
+    if isinstance(dt, (int, float)):
+        return datetime.datetime.fromtimestamp(dt, tz=UTC)
+    if isinstance(dt, str):
+        # Handle trailing Z
+        dt = dt.replace("Z", "+00:00")
+        parsed = datetime.datetime.fromisoformat(dt)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    if isinstance(dt, datetime.datetime):
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+    raise TypeError(f"Cannot convert {type(dt)} to UTC datetime")
+
+
+def _remaining_seconds(eta: datetime.datetime, now: datetime.datetime) -> float:
+    """Return max(0, eta - now) in seconds. Both should be UTC-aware."""
+    eta = _ensure_utc(eta)
+    now = _ensure_utc(now)
+    return max(0.0, (eta - now).total_seconds())
+
+
+# ---------------------------------------------------------------------------
+# Haversine
+# ---------------------------------------------------------------------------
+
+
+def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Return great-circle distance in metres."""
+    R = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
+    dlam = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
 
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
 
-def a_star_route(graph, source: int, target: int, depart_time_dt: datetime.datetime):
+# ---------------------------------------------------------------------------
+# Dijkstra (true time-dependent label-setting)
+# ---------------------------------------------------------------------------
+
+
+def dijkstra_route(
+    graph,
+    source: int,
+    target: int,
+    depart_time_dt,
+) -> Tuple[
+    Optional[datetime.datetime],
+    Optional[List[int]],
+    Optional[List[Tuple[datetime.datetime, datetime.datetime]]],
+]:
     """
-    Time-dependent A* routing using travel time + haversine heuristic.
-    Returns (arrival_time, path, per_segment_times)
+    Time-dependent Dijkstra.
+
+    At each relaxation the edge cost is evaluated at the arrival time at that
+    node, not at the global departure time — this is the correct FIFO
+    time-dependent label-setting algorithm.
+
+    Returns (arrival_dt_utc, path, per_segment_times)
+    where per_segment_times is a list of (start_utc, end_utc) tuples.
     """
+    depart_dt = _ensure_utc(depart_time_dt)
+    start_ts = depart_dt.timestamp()
 
-    pq = []
-    start_ts = depart_time_dt.timestamp()
-
-    # g_score = earliest arrival timestamp at node
-    g_score = {source: start_ts}
-    came_from = {}
-
-    # heuristic scaling: assume max speed ≈ 15 m/s (~54 km/h)
-    MAX_SPEED = 15.0
-
-    def heuristic(u):
-        lat1, lon1 = graph.nodes[u]["lat"], graph.nodes[u]["lon"]
-        lat2, lon2 = graph.nodes[target]["lat"], graph.nodes[target]["lon"]
-        dist = haversine_distance(lat1, lon1, lat2, lon2)
-        return dist / MAX_SPEED
-
-    # (f_score, arrival_time, node)
-    heapq.heappush(pq, (heuristic(source), start_ts, source))
+    dist: dict = {source: start_ts}
+    prev: dict = {}
+    pq = [(start_ts, source)]
 
     while pq:
-        _, curr_time, u = heapq.heappop(pq)
-        print("Visiting node:", u)
+        curr_ts, u = heapq.heappop(pq)
         if u == target:
             break
-
-        if curr_time > g_score.get(u, float("inf")):
+        if curr_ts > dist.get(u, 1e18):
             continue
-
         for v, eid in graph.neighbors(u):
-        
+            travel = graph.edge_travel_time(eid, curr_ts)
+            arrival = curr_ts + travel
+            if arrival < dist.get(v, 1e18):
+                dist[v] = arrival
+                prev[v] = u
+                heapq.heappush(pq, (arrival, v))
 
-            travel_time = graph.edge_travel_time(eid, curr_time)
-            arrival = curr_time + travel_time
+    if target not in dist:
+        return None, None, None
 
-            if arrival < g_score.get(v, float("inf")):
+    path = _reconstruct_path(prev, source, target)
+    per_seg = _build_segments(graph, path, start_ts)
+    arrival_dt = datetime.datetime.fromtimestamp(dist[target], tz=UTC)
+    return arrival_dt, path, per_seg
+
+
+# Alias — exposed publicly so callers that want explicit time-dependence
+# use this name; the implementation IS time-dependent.
+def time_dependent_dijkstra(graph, source, target, depart_time_dt):
+    return dijkstra_route(graph, source, target, depart_time_dt)
+
+
+# ---------------------------------------------------------------------------
+# A*
+# ---------------------------------------------------------------------------
+
+
+def a_star_route(
+    graph,
+    source: int,
+    target: int,
+    depart_time_dt,
+) -> Tuple[
+    Optional[datetime.datetime],
+    Optional[List[int]],
+    Optional[List[Tuple[datetime.datetime, datetime.datetime]]],
+]:
+    """
+    Time-dependent A* with haversine heuristic (max speed 15 m/s ≈ 54 km/h).
+
+    Returns identical output format to dijkstra_route so callers can swap
+    implementations transparently.
+    """
+    depart_dt = _ensure_utc(depart_time_dt)
+    start_ts = depart_dt.timestamp()
+
+    def heuristic(u: int) -> float:
+        if target not in graph.nodes or u not in graph.nodes:
+            return 0.0
+        n1 = graph.nodes[u]
+        n2 = graph.nodes[target]
+        return haversine_distance(n1["lat"], n1["lon"], n2["lat"], n2["lon"]) / A_STAR_MAX_SPEED_MS
+
+    g_score: dict = {source: start_ts}
+    came_from: dict = {}
+    pq = [(start_ts + heuristic(source), start_ts, source)]
+
+    while pq:
+        _, curr_ts, u = heapq.heappop(pq)
+        if u == target:
+            break
+        if curr_ts > g_score.get(u, 1e18):
+            continue
+        for v, eid in graph.neighbors(u):
+            travel = graph.edge_travel_time(eid, curr_ts)
+            arrival = curr_ts + travel
+            if arrival < g_score.get(v, 1e18):
                 g_score[v] = arrival
                 came_from[v] = u
-                f_score = arrival + heuristic(v)
-                heapq.heappush(pq, (f_score, arrival, v))
+                heapq.heappush(pq, (arrival + heuristic(v), arrival, v))
 
     if target not in g_score:
         return None, None, None
 
-    # ---- Reconstruct path ----
-    path = []
-    node = target
-    while node != source:
-        path.append(node)
-        node = came_from[node]
-    path.append(source)
-    path.reverse()
-
-    # ---- Build per-segment times ----
-    per_segment_times = []
-    t = start_ts
-    for i in range(len(path) - 1):
-        eid = graph.edge_id_between(path[i], path[i + 1])
-        w = graph.edge_travel_time(eid, t)
-        eta_start = datetime.datetime.fromtimestamp(t)
-        t += w
-        eta_end = datetime.datetime.fromtimestamp(t)
-        per_segment_times.append((eta_start, eta_end))
-
-    arrival_dt = datetime.datetime.fromtimestamp(g_score[target])
-
-    return arrival_dt, path, per_segment_times
+    path = _reconstruct_path(came_from, source, target)
+    per_seg = _build_segments(graph, path, start_ts)
+    arrival_dt = datetime.datetime.fromtimestamp(g_score[target], tz=UTC)
+    return arrival_dt, path, per_seg
 
 
-# Static Dijkstra (returns arrival_time, path)
-def dijkstra_route(graph, source: int, target: int, depart_time_dt: datetime.datetime):
-    # simple static weights (base_time * multiplier)
-    pq = []
-    dist = {}
-    prev = {}
-    start = depart_time_dt.timestamp()
-    dist[source] = start
-    heapq.heappush(pq, (start, source))
-    while pq:
-        curr_time, u = heapq.heappop(pq)
-        if u == target:
-            break
-        if curr_time > dist.get(u, 1e99):
-            continue
-        for v, eid in graph.neighbors(u):
-            w = graph.edge_travel_time(eid, curr_time)  # uses multiplier
-            arrival = curr_time + w
-            if arrival < dist.get(v, 1e99):
-                dist[v] = arrival
-                prev[v] = u
-                heapq.heappush(pq, (arrival, v))
-    if target not in dist:
-        return None, None, None
-    # reconstruct path
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _reconstruct_path(prev: dict, source: int, target: int) -> List[int]:
     path = []
     node = target
     while node != source:
@@ -122,22 +188,20 @@ def dijkstra_route(graph, source: int, target: int, depart_time_dt: datetime.dat
         node = prev[node]
     path.append(source)
     path.reverse()
-    arrival_dt = datetime.datetime.fromtimestamp(dist[target])
-    # per-segment times
+    return path
+
+
+def _build_segments(
+    graph, path: List[int], start_ts: float
+) -> List[Tuple[datetime.datetime, datetime.datetime]]:
+    """Build per-segment UTC datetime tuples from a path."""
     per_seg = []
-    t = start
-    for i in range(len(path)-1):
-        eid = graph.edge_id_between(path[i], path[i+1])
+    t = start_ts
+    for i in range(len(path) - 1):
+        eid = graph.edge_id_between(path[i], path[i + 1])
         w = graph.edge_travel_time(eid, t)
-        eta_start = datetime.datetime.fromtimestamp(t)
-        t = t + w
-        eta_end = datetime.datetime.fromtimestamp(t)
+        eta_start = datetime.datetime.fromtimestamp(t, tz=UTC)
+        t += w
+        eta_end = datetime.datetime.fromtimestamp(t, tz=UTC)
         per_seg.append((eta_start, eta_end))
-    return arrival_dt, path, per_seg
-
-# Time-dependent Dijkstra (label-setting)
-def time_dependent_dijkstra(graph, source: int, target: int, depart_time_dt: datetime.datetime):
-    # This implementation is same as the (label-setting) Dijkstra using edge travel_time(depart_time)
-    # For complex piecewise travel_time functions, ensure FIFO property. MVP: ok.
-    return dijkstra_route(graph, source, target, depart_time_dt)
-
+    return per_seg

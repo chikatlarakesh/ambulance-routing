@@ -1,0 +1,5 @@
+# Minimal runtime dependencies for production Docker image
+fastapi
+uvicorn[standard]
+pydantic
+pytz

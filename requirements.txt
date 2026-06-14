@@ -1,5 +1,16 @@
+# Runtime dependencies
 fastapi
 uvicorn[standard]
 pydantic
-networkx
-numpy
+pytz
+
+# Test dependencies
+pytest
+pytest-cov
+httpx
+
+# Development / code-quality tools (not required in production Docker image)
+black
+isort
+flake8
+mypy

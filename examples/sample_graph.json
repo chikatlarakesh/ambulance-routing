@@ -40,6 +40,13 @@
       "to": 3,
       "base_time": 60,
       "distance": 700
+    },
+    {
+      "edge_id": 6,
+      "from": 3,
+      "to": 4,
+      "base_time": 40,
+      "distance": 800
     }
   ]
 }
